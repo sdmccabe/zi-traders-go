@@ -20,15 +20,17 @@ import (
 )
 
 //globals
-var numBuyers int = 1000000
-var numSellers int = 1000000
+var numBuyers int = 1200000
+var numSellers int = 1200000
 var maxBuyerValue int = 30
 var maxSellerValue int = 30
 var maxNumberOfTrades int = 100000000
-var numThreads int = 1
+var numThreads int = 100
 var buyersPerThread int = numBuyers / numThreads
 var sellersPerThread int = numSellers / numThreads
 var tradesPerThread int = maxNumberOfTrades / numThreads
+var buyers []agent
+var sellers []agent
 
 //debugging
 var countTrades uint64
@@ -69,7 +71,7 @@ func initializeAgents() ([]agent, []agent) {
 	return b, s
 }
 
-func openMarket(b []agent, s []agent) {
+func openMarket() {
 	// until we parallelize, this essentially just launches DoTrades() and computeStatistics()
 	//for i := 0; i < maxNumberOfTrades; i++ {
 	//doTrades(b, s, 1)
@@ -77,20 +79,20 @@ func openMarket(b []agent, s []agent) {
 	var wg sync.WaitGroup
 	for i := 0; i < numThreads; i++ {
 		wg.Add(1)
-		go func(b []agent, s []agent, threadNum int) {
+		go func(threadNum int) {
 			defer wg.Done()
 			//defer fmt.Printf("Finished thread number %d\n", threadNum)
-			doTrades(b, s, threadNum)
+			doTrades(threadNum)
 			runtime.Gosched()
-		}(b, s, i)
+		}(i)
 	}
 	wg.Wait()
 	//fmt.Printf("%v\n", b)
 	fmt.Printf("%d out of %d possible trades executed (max: %d)\n", atomic.LoadUint64(&countActualTrades), atomic.LoadUint64(&countTrades), maxNumberOfTrades)
-	computeStatistics(b, s)
+	computeStatistics()
 }
 
-func doTrades(b []agent, s []agent, threadNum int) {
+func doTrades(threadNum int) {
 	//Pair up buyers and sellers and execute trades if the bid and ask prices are compatible.
 	//fmt.Println(threadNum)
 	//fmt.Printf(" %d %d\n", bidPrice, askPrice)
@@ -108,43 +110,46 @@ func doTrades(b []agent, s []agent, threadNum int) {
 		//fmt.Printf("buyerIndex: %d, sellerIndex: %d\n", buyerIndex, sellerIndex)
 
 		//set bid and ask prices
-		bidPrice := rand.Intn(b[buyerIndex].value) + 1
-		askPrice := s[sellerIndex].value + rand.Intn(maxSellerValue-s[sellerIndex].value+1)
+		bidPrice := rand.Intn(buyers[buyerIndex].value) + 1
+		askPrice := sellers[sellerIndex].value + rand.Intn(maxSellerValue-sellers[sellerIndex].value+1)
 
 		//old bid/ask
 		//bidPrice := (rand.Int() % b[buyerIndex].value) + 1
 		//askPrice := s[sellerIndex].value + (rand.Int() % (maxSellerValue - s[sellerIndex].value + 1))
 		var transactionPrice int
 		//is a deal possible?
-		if b[buyerIndex].quantityHeld == 0 && s[sellerIndex].quantityHeld == 1 && bidPrice >= askPrice {
+		if buyers[buyerIndex].quantityHeld == 0 && sellers[sellerIndex].quantityHeld == 1 && bidPrice >= askPrice {
 			atomic.AddUint64(&countActualTrades, 1)
+			//fmt.Printf("%d traded with %d\n", buyerIndex, sellerIndex)
 			// set transaction price
 			transactionPrice = askPrice + rand.Intn(bidPrice-askPrice+1)
-			b[buyerIndex].price = transactionPrice
-			s[sellerIndex].price = transactionPrice
+			buyers[buyerIndex].price = transactionPrice
+			sellers[sellerIndex].price = transactionPrice
 
 			// execute trade
-			b[buyerIndex].quantityHeld = 1
-			s[sellerIndex].quantityHeld = 0
-		}
+			buyers[buyerIndex].quantityHeld = 1
+			sellers[sellerIndex].quantityHeld = 0
+		} // else {
+		//	fmt.Printf("%d failed to trade with %d\n", buyerIndex, sellerIndex)
+		//}
 
 		atomic.AddUint64(&countTrades, 1)
 	}
 }
 
-func computeStatistics(b []agent, s []agent) {
+func computeStatistics() {
 	// Compute some statistics for the run and output to STDOUT.
 	numberBought := 0
 	numberSold := 0
 	sum := make(stat.IntSlice, 1)
 
-	for _, x := range b {
+	for _, x := range buyers {
 		if x.quantityHeld == 1 {
 			numberBought++
 			sum = append(sum, int64(x.price))
 		}
 	}
-	for _, x := range s {
+	for _, x := range sellers {
 		if x.quantityHeld == 0 {
 			numberSold++
 			sum = append(sum, int64(x.price))
@@ -160,6 +165,6 @@ func main() {
 	// seed RNG
 	rand.Seed(time.Now().UTC().UnixNano())
 
-	buyers, sellers := initializeAgents()
-	openMarket(buyers, sellers)
+	buyers, sellers = initializeAgents()
+	openMarket()
 }
