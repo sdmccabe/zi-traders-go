@@ -9,32 +9,28 @@ package main
 // Gode and Sunder, QJE, 1993
 
 import (
+	"flag"
 	"fmt"
 	"github.com/grd/stat"
 	"github.com/pkg/profile"
 	"math/rand"
 	"runtime"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
 //globals
-var numBuyers int = 1200000
-var numSellers int = 1200000
-var maxBuyerValue int = 30
-var maxSellerValue int = 30
-var maxNumberOfTrades int = 100000000
-var numThreads int = 100
-var buyersPerThread int = numBuyers / numThreads
-var sellersPerThread int = numSellers / numThreads
-var tradesPerThread int = maxNumberOfTrades / numThreads
+var numBuyers = 1200000
+var numSellers = 1200000
+var maxBuyerValue = 30
+var maxSellerValue = 30
+var maxNumberOfTrades = 100000000
+var numThreads = 8
+var buyersPerThread = numBuyers / numThreads
+var sellersPerThread = numSellers / numThreads
+var tradesPerThread = maxNumberOfTrades / numThreads
 var buyers []agent
 var sellers []agent
-
-//debugging
-var countTrades uint64
-var countActualTrades uint64
 
 type agent struct {
 	buyerOrSeller bool // true is buyer, false is seller
@@ -46,6 +42,7 @@ type agent struct {
 func (a agent) String() string {
 	return fmt.Sprintf("buyer: %t, held: %d, value: %d, price: %d\n", a.buyerOrSeller, a.quantityHeld, a.value, a.price)
 }
+
 func initializeAgents() ([]agent, []agent) {
 	// Create two slices of agents, one representing buyers and the other sellers.
 
@@ -72,30 +69,24 @@ func initializeAgents() ([]agent, []agent) {
 }
 
 func openMarket() {
-	// until we parallelize, this essentially just launches DoTrades() and computeStatistics()
-	//for i := 0; i < maxNumberOfTrades; i++ {
-	//doTrades(b, s, 1)
-	//}
+	// Open doTrades() on multiple threads, then compute statistics.
 	var wg sync.WaitGroup
 	for i := 0; i < numThreads; i++ {
 		wg.Add(1)
 		go func(threadNum int) {
 			defer wg.Done()
-			//defer fmt.Printf("Finished thread number %d\n", threadNum)
+			defer fmt.Printf("Finished thread number %d\n", threadNum)
 			doTrades(threadNum)
-			runtime.Gosched()
 		}(i)
 	}
 	wg.Wait()
-	//fmt.Printf("%v\n", b)
-	fmt.Printf("%d out of %d possible trades executed (max: %d)\n", atomic.LoadUint64(&countActualTrades), atomic.LoadUint64(&countTrades), maxNumberOfTrades)
 	computeStatistics()
 }
 
 func doTrades(threadNum int) {
 	//Pair up buyers and sellers and execute trades if the bid and ask prices are compatible.
-	//fmt.Println(threadNum)
-	//fmt.Printf(" %d %d\n", bidPrice, askPrice)
+	source := rand.NewSource(time.Now().UnixNano())
+	generator := rand.New(source)
 	for i := 1; i < tradesPerThread; i++ { //why i=1?
 
 		//bound the slice based on thread number
@@ -105,35 +96,26 @@ func doTrades(threadNum int) {
 		upperSellerBound := (threadNum+1)*sellersPerThread - 1
 
 		//select buyer and seller
-		buyerIndex := lowerBuyerBound + rand.Intn(upperBuyerBound-lowerBuyerBound)
-		sellerIndex := lowerSellerBound + rand.Intn(upperSellerBound-lowerSellerBound)
-		//fmt.Printf("buyerIndex: %d, sellerIndex: %d\n", buyerIndex, sellerIndex)
+		buyerIndex := lowerBuyerBound + generator.Intn(upperBuyerBound-lowerBuyerBound)
+		sellerIndex := lowerSellerBound + generator.Intn(upperSellerBound-lowerSellerBound)
 
 		//set bid and ask prices
-		bidPrice := rand.Intn(buyers[buyerIndex].value) + 1
+		bidPrice := generator.Intn(buyers[buyerIndex].value) + 1
 		askPrice := sellers[sellerIndex].value + rand.Intn(maxSellerValue-sellers[sellerIndex].value+1)
 
-		//old bid/ask
-		//bidPrice := (rand.Int() % b[buyerIndex].value) + 1
-		//askPrice := s[sellerIndex].value + (rand.Int() % (maxSellerValue - s[sellerIndex].value + 1))
 		var transactionPrice int
+
 		//is a deal possible?
 		if buyers[buyerIndex].quantityHeld == 0 && sellers[sellerIndex].quantityHeld == 1 && bidPrice >= askPrice {
-			atomic.AddUint64(&countActualTrades, 1)
-			//fmt.Printf("%d traded with %d\n", buyerIndex, sellerIndex)
 			// set transaction price
-			transactionPrice = askPrice + rand.Intn(bidPrice-askPrice+1)
+			transactionPrice = askPrice + generator.Intn(bidPrice-askPrice+1)
 			buyers[buyerIndex].price = transactionPrice
 			sellers[sellerIndex].price = transactionPrice
 
 			// execute trade
 			buyers[buyerIndex].quantityHeld = 1
 			sellers[sellerIndex].quantityHeld = 0
-		} // else {
-		//	fmt.Printf("%d failed to trade with %d\n", buyerIndex, sellerIndex)
-		//}
-
-		atomic.AddUint64(&countTrades, 1)
+		}
 	}
 }
 
@@ -161,7 +143,9 @@ func computeStatistics() {
 
 func main() {
 	defer profile.Start(profile.CPUProfile, profile.ProfilePath(".")).Stop()
-	runtime.GOMAXPROCS(4)
+
+	flag.IntVar(&numThreads, "p", runtime.NumCPU()*2, "number of goroutine to use")
+	flag.Parse()
 	// seed RNG
 	rand.Seed(time.Now().UTC().UnixNano())
 
