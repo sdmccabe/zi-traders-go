@@ -72,6 +72,9 @@ func initializeAgents() ([]agent, []agent) {
 func openMarket() {
 	// Open doTrades() on multiple threads, then compute statistics.
 	var wg sync.WaitGroup
+	if verbose {
+		fmt.Println(buyers)
+	}
 	for i := 0; i < numThreads; i++ {
 		wg.Add(1)
 		go func(threadNum int) {
@@ -83,6 +86,9 @@ func openMarket() {
 		}(i)
 	}
 	wg.Wait()
+	if verbose {
+		fmt.Println(buyers)
+	}
 	computeStatistics()
 }
 
@@ -151,9 +157,9 @@ func main() {
 	flag.BoolVar(&verbose, "v", false, "verbose (track goroutines)")
 	flag.Parse()
 
-	buyersPerThread = numBuyers / numThreads
-	sellersPerThread = numSellers / numThreads
-	tradesPerThread = maxNumberOfTrades / numThreads
+	buyersPerThread = int(float64(numBuyers) / float64(numThreads))
+	sellersPerThread = int(float64(numSellers) / float64(numThreads))
+	tradesPerThread = int(float64(maxNumberOfTrades) / float64(numThreads))
 
 	// seed RNG
 	rand.Seed(time.Now().UTC().UnixNano())
