@@ -25,12 +25,13 @@ var numSellers = 1200000
 var maxBuyerValue = 30
 var maxSellerValue = 30
 var maxNumberOfTrades = 100000000
-var numThreads = 8
-var buyersPerThread = numBuyers / numThreads
-var sellersPerThread = numSellers / numThreads
-var tradesPerThread = maxNumberOfTrades / numThreads
+var numThreads int
+var buyersPerThread int
+var sellersPerThread int
+var tradesPerThread int
 var buyers []agent
 var sellers []agent
+var verbose bool
 
 type agent struct {
 	buyerOrSeller bool // true is buyer, false is seller
@@ -75,7 +76,9 @@ func openMarket() {
 		wg.Add(1)
 		go func(threadNum int) {
 			defer wg.Done()
-			defer fmt.Printf("Finished thread number %d\n", threadNum)
+			if verbose {
+				defer fmt.Printf("Finished thread number %d\n", threadNum)
+			}
 			doTrades(threadNum)
 		}(i)
 	}
@@ -101,7 +104,7 @@ func doTrades(threadNum int) {
 
 		//set bid and ask prices
 		bidPrice := generator.Intn(buyers[buyerIndex].value) + 1
-		askPrice := sellers[sellerIndex].value + rand.Intn(maxSellerValue-sellers[sellerIndex].value+1)
+		askPrice := sellers[sellerIndex].value + generator.Intn(maxSellerValue-sellers[sellerIndex].value+1)
 
 		var transactionPrice int
 
@@ -145,9 +148,16 @@ func main() {
 	defer profile.Start(profile.CPUProfile, profile.ProfilePath(".")).Stop()
 
 	flag.IntVar(&numThreads, "p", runtime.NumCPU()*2, "number of goroutine to use")
+	flag.BoolVar(&verbose, "v", false, "verbose (track goroutines)")
 	flag.Parse()
+
+	buyersPerThread = numBuyers / numThreads
+	sellersPerThread = numSellers / numThreads
+	tradesPerThread = maxNumberOfTrades / numThreads
+
 	// seed RNG
 	rand.Seed(time.Now().UTC().UnixNano())
+	fmt.Printf("numThreads: %d\n", numThreads)
 
 	buyers, sellers = initializeAgents()
 	openMarket()
