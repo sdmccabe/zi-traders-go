@@ -44,8 +44,8 @@ func (a agent) String() string {
 	return fmt.Sprintf("buyer: %t, held: %d, value: %d, price: %d\n", a.buyerOrSeller, a.quantityHeld, a.value, a.price)
 }
 
+// Create two slices of agents, one representing buyers and the other sellers.
 func initializeAgents() ([]agent, []agent) {
-	// Create two slices of agents, one representing buyers and the other sellers.
 
 	b := make([]agent, numBuyers)
 	s := make([]agent, numSellers)
@@ -54,27 +54,28 @@ func initializeAgents() ([]agent, []agent) {
 		b[i] = agent{
 			buyerOrSeller: true,
 			quantityHeld:  0,
-			//value:         1 + rand.Intn(maxBuyerValue)}
-			value: (rand.Int() % maxBuyerValue) + 1}
+			value:         (rand.Int() % maxBuyerValue) + 1}
 	}
 
 	for i := 0; i < numSellers; i++ {
 		s[i] = agent{
 			buyerOrSeller: false,
 			quantityHeld:  1,
-			//value:         1 + rand.Intn(maxSellerValue)}
-			value: (rand.Int() % maxBuyerValue) + 1}
+			value:         (rand.Int() % maxBuyerValue) + 1}
 	}
 
 	return b, s
 }
 
+// Divide the agent population into chunks, have these chunks perform trades,
+// then compute market statistics.
 func openMarket() {
-	// Open doTrades() on multiple threads, then compute statistics.
 	var wg sync.WaitGroup
+
 	if verbose {
 		fmt.Println(buyers)
 	}
+
 	for i := 0; i < numThreads; i++ {
 		wg.Add(1)
 		go func(threadNum int) {
@@ -85,17 +86,22 @@ func openMarket() {
 			doTrades(threadNum)
 		}(i)
 	}
-	wg.Wait()
+	wg.Wait() //block until all threads are done for safety
+
 	if verbose {
 		fmt.Println(buyers)
 	}
+
 	computeStatistics()
 }
 
+//Pair up buyers and sellers and execute trades if the bid and ask prices are compatible.
 func doTrades(threadNum int) {
-	//Pair up buyers and sellers and execute trades if the bid and ask prices are compatible.
+	// Each thread needs its own random source to prevent excessive blocking on rand.
+	// Adding these lines sped the model up approx. 9 times.
 	source := rand.NewSource(time.Now().UnixNano())
 	generator := rand.New(source)
+
 	for i := 1; i < tradesPerThread; i++ { //why i=1?
 
 		//bound the slice based on thread number
@@ -128,8 +134,8 @@ func doTrades(threadNum int) {
 	}
 }
 
+// Compute some statistics for the run and output to STDOUT.
 func computeStatistics() {
-	// Compute some statistics for the run and output to STDOUT.
 	numberBought := 0
 	numberSold := 0
 	sum := make(stat.IntSlice, 1)
