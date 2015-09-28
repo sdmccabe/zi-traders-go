@@ -9,24 +9,39 @@ package main
 // Gode and Sunder, QJE, 1993
 
 import (
+	"flag"
 	"fmt"
 	"github.com/grd/stat"
+	"github.com/pkg/profile"
 	"math/rand"
+	"runtime"
+	"sync"
 	"time"
 )
 
 //globals
-var numBuyers int = 1200000
-var numSellers int = 1200000
-var maxBuyerValue int = 30
-var maxSellerValue int = 30
-var maxNumberOfTrades int = 100000000
+var numBuyers = 1200000
+var numSellers = 1200000
+var maxBuyerValue = 30
+var maxSellerValue = 30
+var maxNumberOfTrades = 100000000
+var numThreads int
+var buyersPerThread int
+var sellersPerThread int
+var tradesPerThread int
+var buyers []agent
+var sellers []agent
+var verbose bool
 
 type agent struct {
 	buyerOrSeller bool // true is buyer, false is seller
 	quantityHeld  int
 	value         int
 	price         int
+}
+
+func (a agent) String() string {
+	return fmt.Sprintf("buyer: %t, held: %d, value: %d, price: %d\n", a.buyerOrSeller, a.quantityHeld, a.value, a.price)
 }
 
 func initializeAgents() ([]agent, []agent) {
@@ -39,67 +54,93 @@ func initializeAgents() ([]agent, []agent) {
 		b[i] = agent{
 			buyerOrSeller: true,
 			quantityHeld:  0,
-			value:         (rand.Int() % maxBuyerValue) + 1}
+			//value:         1 + rand.Intn(maxBuyerValue)}
+			value: (rand.Int() % maxBuyerValue) + 1}
 	}
 
 	for i := 0; i < numSellers; i++ {
 		s[i] = agent{
 			buyerOrSeller: false,
 			quantityHeld:  1,
-			value:         (rand.Int() % maxSellerValue) + 1}
-
+			//value:         1 + rand.Intn(maxSellerValue)}
+			value: (rand.Int() % maxBuyerValue) + 1}
 	}
+
 	return b, s
 }
 
-func openMarket(b []agent, s []agent) {
-	// until we parallelize, this essentially just launches DoTrades() and computeStatistics()
-	for i := 0; i < maxNumberOfTrades; i++ {
-		doTrades(b, s)
+func openMarket() {
+	// Open doTrades() on multiple threads, then compute statistics.
+	var wg sync.WaitGroup
+	if verbose {
+		fmt.Println(buyers)
 	}
-	computeStatistics(b, s)
+	for i := 0; i < numThreads; i++ {
+		wg.Add(1)
+		go func(threadNum int) {
+			defer wg.Done()
+			if verbose {
+				defer fmt.Printf("Finished thread number %d\n", threadNum)
+			}
+			doTrades(threadNum)
+		}(i)
+	}
+	wg.Wait()
+	if verbose {
+		fmt.Println(buyers)
+	}
+	computeStatistics()
 }
 
-func doTrades(b []agent, s []agent) {
+func doTrades(threadNum int) {
 	//Pair up buyers and sellers and execute trades if the bid and ask prices are compatible.
+	source := rand.NewSource(time.Now().UnixNano())
+	generator := rand.New(source)
+	for i := 1; i < tradesPerThread; i++ { //why i=1?
 
-	//select buyer and seller
-	buyerIndex := rand.Intn(len(b))
-	sellerIndex := rand.Intn(len(s))
+		//bound the slice based on thread number
+		lowerBuyerBound := threadNum * buyersPerThread
+		upperBuyerBound := (threadNum+1)*buyersPerThread - 1
+		lowerSellerBound := threadNum * sellersPerThread
+		upperSellerBound := (threadNum+1)*sellersPerThread - 1
 
-	//set bid and ask prices
-	bidPrice := (rand.Int() % b[buyerIndex].value) + 1
-	askPrice := s[sellerIndex].value + (rand.Int() % (maxSellerValue - s[sellerIndex].value + 1))
-	var transactionPrice int
-	//fmt.Printf(" %d %d\n", bidPrice, askPrice)
+		//select buyer and seller
+		buyerIndex := lowerBuyerBound + generator.Intn(upperBuyerBound-lowerBuyerBound)
+		sellerIndex := lowerSellerBound + generator.Intn(upperSellerBound-lowerSellerBound)
 
-	//is a deal possible?
-	if b[buyerIndex].quantityHeld == 0 && s[sellerIndex].quantityHeld == 1 && bidPrice >= askPrice {
-		// set transaction price
-		transactionPrice = askPrice + rand.Int()%(bidPrice-askPrice+1)
-		b[buyerIndex].price = transactionPrice
-		s[sellerIndex].price = transactionPrice
+		//set bid and ask prices
+		bidPrice := generator.Intn(buyers[buyerIndex].value) + 1
+		askPrice := sellers[sellerIndex].value + generator.Intn(maxSellerValue-sellers[sellerIndex].value+1)
 
-		// execute trade
-		b[buyerIndex].quantityHeld = 1
-		s[sellerIndex].quantityHeld = 0
+		var transactionPrice int
+
+		//is a deal possible?
+		if buyers[buyerIndex].quantityHeld == 0 && sellers[sellerIndex].quantityHeld == 1 && bidPrice >= askPrice {
+			// set transaction price
+			transactionPrice = askPrice + generator.Intn(bidPrice-askPrice+1)
+			buyers[buyerIndex].price = transactionPrice
+			sellers[sellerIndex].price = transactionPrice
+
+			// execute trade
+			buyers[buyerIndex].quantityHeld = 1
+			sellers[sellerIndex].quantityHeld = 0
+		}
 	}
-
 }
 
-func computeStatistics(b []agent, s []agent) {
+func computeStatistics() {
 	// Compute some statistics for the run and output to STDOUT.
 	numberBought := 0
 	numberSold := 0
 	sum := make(stat.IntSlice, 1)
 
-	for _, x := range b {
+	for _, x := range buyers {
 		if x.quantityHeld == 1 {
 			numberBought++
 			sum = append(sum, int64(x.price))
 		}
 	}
-	for _, x := range s {
+	for _, x := range sellers {
 		if x.quantityHeld == 0 {
 			numberSold++
 			sum = append(sum, int64(x.price))
@@ -110,9 +151,20 @@ func computeStatistics(b []agent, s []agent) {
 }
 
 func main() {
+	defer profile.Start(profile.CPUProfile, profile.ProfilePath(".")).Stop()
+
+	flag.IntVar(&numThreads, "p", runtime.NumCPU()*2, "number of goroutine to use")
+	flag.BoolVar(&verbose, "v", false, "verbose (track goroutines)")
+	flag.Parse()
+
+	buyersPerThread = int(float64(numBuyers) / float64(numThreads))
+	sellersPerThread = int(float64(numSellers) / float64(numThreads))
+	tradesPerThread = int(float64(maxNumberOfTrades) / float64(numThreads))
+
 	// seed RNG
 	rand.Seed(time.Now().UTC().UnixNano())
+	fmt.Printf("numThreads: %d\n", numThreads)
 
-	buyers, sellers := initializeAgents()
-	openMarket(buyers, sellers)
+	buyers, sellers = initializeAgents()
+	openMarket()
 }
