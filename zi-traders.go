@@ -32,6 +32,7 @@ var tradesPerThread int
 var buyers []agent
 var sellers []agent
 var verbose bool
+var profiling bool
 
 type agent struct {
 	buyerOrSeller bool // true is buyer, false is seller
@@ -157,12 +158,16 @@ func computeStatistics() {
 }
 
 func main() {
-	defer profile.Start(profile.CPUProfile, profile.ProfilePath(".")).Stop()
 
+	fmt.Printf("\nZERO INTELLIGENCE TRADERS\n")
 	flag.IntVar(&numThreads, "p", runtime.NumCPU()*2, "number of goroutine to use")
 	flag.BoolVar(&verbose, "v", false, "verbose (track goroutines)")
+	flag.BoolVar(&profiling, "profile", false, "enable CPU profiling")
 	flag.Parse()
 
+	if profiling {
+		defer profile.Start(profile.CPUProfile, profile.ProfilePath(".")).Stop()
+	}
 	buyersPerThread = int(float64(numBuyers) / float64(numThreads))
 	sellersPerThread = int(float64(numSellers) / float64(numThreads))
 	tradesPerThread = int(float64(maxNumberOfTrades) / float64(numThreads))
