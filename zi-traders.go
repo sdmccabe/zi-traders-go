@@ -24,7 +24,7 @@ var numBuyers = 1200000
 var numSellers = 1200000
 var maxBuyerValue = 30
 var maxSellerValue = 30
-var maxNumberOfTrades = 100000000
+var maxNumberOfTrades = 10000000
 var numThreads int
 var buyersPerThread int
 var sellersPerThread int
@@ -39,6 +39,7 @@ type agent struct {
 	quantityHeld  int
 	value         int
 	price         int
+	lock          sync.Mutex
 }
 
 func (a agent) String() string {
@@ -68,70 +69,42 @@ func initializeAgents() ([]agent, []agent) {
 	return b, s
 }
 
-// Divide the agent population into chunks, have these chunks perform trades,
-// then compute market statistics.
+// Execute each potential trade on its own goroutine, blocking while needed, then
+// compute statistics and output.
 func openMarket() {
-	var wg sync.WaitGroup
-
-	if verbose {
-		fmt.Println(buyers)
+	for i := 0; i < maxNumberOfTrades; i++ {
+		buyer := &buyers[rand.Intn(len(buyers))]
+		seller := &sellers[rand.Intn(len(sellers))]
+		go func(b, s *agent) {
+			buyer.lock.Lock()
+			seller.lock.Lock()
+			defer buyer.lock.Unlock()
+			defer seller.lock.Unlock()
+			makeTrade(b, s)
+		}(buyer, seller)
 	}
-
-	for i := 0; i < numThreads; i++ {
-		wg.Add(1)
-		go func(threadNum int) {
-			defer wg.Done()
-			if verbose {
-				defer fmt.Printf("Finished thread number %d\n", threadNum)
-			}
-			doTrades(threadNum)
-		}(i)
-	}
-	wg.Wait() //block until all threads are done for safety
-
-	if verbose {
-		fmt.Println(buyers)
-	}
-
 	computeStatistics()
 }
 
-//Pair up buyers and sellers and execute trades if the bid and ask prices are compatible.
-func doTrades(threadNum int) {
-	// Each thread needs its own random source to prevent excessive blocking on rand.
-	// Adding these lines sped the model up approx. 9 times.
-	source := rand.NewSource(time.Now().UnixNano())
-	generator := rand.New(source)
+// Execute a trade between buyer and seller if possible.
+func makeTrade(buyer, seller *agent) {
 
-	for i := 1; i < tradesPerThread; i++ { //why i=1?
+	//set bid and ask prices
+	bidPrice := rand.Intn(buyer.value) + 1
+	askPrice := seller.value + rand.Intn(maxSellerValue-seller.value+1)
 
-		//bound the slice based on thread number
-		lowerBuyerBound := threadNum * buyersPerThread
-		upperBuyerBound := (threadNum+1)*buyersPerThread - 1
-		lowerSellerBound := threadNum * sellersPerThread
-		upperSellerBound := (threadNum+1)*sellersPerThread - 1
+	var transactionPrice int
 
-		//select buyer and seller
-		buyerIndex := lowerBuyerBound + generator.Intn(upperBuyerBound-lowerBuyerBound)
-		sellerIndex := lowerSellerBound + generator.Intn(upperSellerBound-lowerSellerBound)
+	//is a deal possible?
+	if buyer.quantityHeld == 0 && seller.quantityHeld == 1 && bidPrice >= askPrice {
+		// set transaction price
+		transactionPrice = askPrice + rand.Intn(bidPrice-askPrice+1)
+		buyer.price = transactionPrice
+		seller.price = transactionPrice
 
-		//set bid and ask prices
-		bidPrice := generator.Intn(buyers[buyerIndex].value) + 1
-		askPrice := sellers[sellerIndex].value + generator.Intn(maxSellerValue-sellers[sellerIndex].value+1)
-
-		var transactionPrice int
-
-		//is a deal possible?
-		if buyers[buyerIndex].quantityHeld == 0 && sellers[sellerIndex].quantityHeld == 1 && bidPrice >= askPrice {
-			// set transaction price
-			transactionPrice = askPrice + generator.Intn(bidPrice-askPrice+1)
-			buyers[buyerIndex].price = transactionPrice
-			sellers[sellerIndex].price = transactionPrice
-
-			// execute trade
-			buyers[buyerIndex].quantityHeld = 1
-			sellers[sellerIndex].quantityHeld = 0
-		}
+		// execute trade
+		buyer.quantityHeld = 1
+		seller.quantityHeld = 0
 	}
 }
 
