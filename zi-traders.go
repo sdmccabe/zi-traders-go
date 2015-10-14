@@ -22,9 +22,10 @@ import (
 //globals
 var numBuyers = 1200000
 var numSellers = 1200000
+
 var maxBuyerValue = 30
 var maxSellerValue = 30
-var maxNumberOfTrades = 10000000
+var maxNumberOfTrades = 100000000
 var numThreads int
 var buyersPerThread int
 var sellersPerThread int
@@ -33,6 +34,7 @@ var buyers []agent
 var sellers []agent
 var verbose bool
 var profiling bool
+var randomNumbers chan int
 
 type agent struct {
 	buyerOrSeller bool // true is buyer, false is seller
@@ -72,17 +74,23 @@ func initializeAgents() ([]agent, []agent) {
 // Execute each potential trade on its own goroutine, blocking while needed, then
 // compute statistics and output.
 func openMarket() {
+	var wg sync.WaitGroup
+	wg.Add(maxNumberOfTrades)
+
 	for i := 0; i < maxNumberOfTrades; i++ {
-		buyer := &buyers[rand.Intn(len(buyers))]
-		seller := &sellers[rand.Intn(len(sellers))]
+		buyer := &buyers[rand.Intn(numBuyers)]
+		seller := &sellers[rand.Intn(numSellers)]
 		go func(b, s *agent) {
+			defer wg.Done()
+
 			buyer.lock.Lock()
 			seller.lock.Lock()
-			defer buyer.lock.Unlock()
-			defer seller.lock.Unlock()
 			makeTrade(b, s)
+			buyer.lock.Unlock()
+			seller.lock.Unlock()
 		}(buyer, seller)
 	}
+	wg.Wait()
 	computeStatistics()
 }
 
@@ -90,15 +98,18 @@ func openMarket() {
 func makeTrade(buyer, seller *agent) {
 
 	//set bid and ask prices
-	bidPrice := rand.Intn(buyer.value) + 1
-	askPrice := seller.value + rand.Intn(maxSellerValue-seller.value+1)
+	//bidPrice := rand.Intn(buyer.value) + 1
+	bidPrice := (<-randomNumbers % buyer.value) + 1
+	//askPrice := seller.value + rand.Intn(maxSellerValue-seller.value+1)
+	askPrice := seller.value + (<-randomNumbers % (maxSellerValue - seller.value + 1))
 
 	var transactionPrice int
 
 	//is a deal possible?
 	if buyer.quantityHeld == 0 && seller.quantityHeld == 1 && bidPrice >= askPrice {
 		// set transaction price
-		transactionPrice = askPrice + rand.Intn(bidPrice-askPrice+1)
+		//transactionPrice = askPrice + rand.Intn(bidPrice-askPrice+1)
+		transactionPrice = askPrice + (<-randomNumbers % (bidPrice - askPrice + 1))
 		buyer.price = transactionPrice
 		seller.price = transactionPrice
 
@@ -126,14 +137,14 @@ func computeStatistics() {
 			sum = append(sum, int64(x.price))
 		}
 	}
+
 	fmt.Printf("%d items bought and %d items sold\n", numberBought, numberSold)
 	fmt.Printf("The average price = %f and the s.d. is %f\n", stat.Mean(sum), stat.Sd(sum))
 }
 
 func main() {
-
 	fmt.Printf("\nZERO INTELLIGENCE TRADERS\n")
-	flag.IntVar(&numThreads, "p", runtime.NumCPU()*2, "number of goroutine to use")
+	flag.IntVar(&numThreads, "p", runtime.NumCPU()*2, "number of goroutines to use")
 	flag.BoolVar(&verbose, "v", false, "verbose (track goroutines)")
 	flag.BoolVar(&profiling, "profile", false, "enable CPU profiling")
 	flag.Parse()
@@ -148,7 +159,12 @@ func main() {
 	// seed RNG
 	rand.Seed(time.Now().UTC().UnixNano())
 	fmt.Printf("numThreads: %d\n", numThreads)
-
+	randomNumbers = make(chan int, 10000000) // arbitary buffer size
+	go func() {
+		for {
+			randomNumbers <- rand.Int()
+		}
+	}()
 	buyers, sellers = initializeAgents()
 	openMarket()
 }
