@@ -55,14 +55,14 @@ func initializeAgents() ([]agent, []agent) {
 		b[i] = agent{
 			buyerOrSeller: true,
 			quantityHeld:  0,
-			value:         (rand.Int() % maxBuyerValue) + 1}
+			value:         rand.Intn(maxBuyerValue) + 1}
 	}
 
 	for i := 0; i < numSellers; i++ {
 		s[i] = agent{
 			buyerOrSeller: false,
 			quantityHeld:  1,
-			value:         (rand.Int() % maxBuyerValue) + 1}
+			value:         rand.Intn(maxSellerValue) + 1}
 	}
 
 	return b, s
@@ -139,7 +139,7 @@ func doTrades(threadNum int) {
 func computeStatistics() {
 	numberBought := 0
 	numberSold := 0
-	sum := make(stat.IntSlice, 1)
+	sum := make(stat.IntSlice, 0)
 
 	for _, x := range buyers {
 		if x.quantityHeld == 1 {
@@ -168,9 +168,10 @@ func main() {
 	if profiling {
 		defer profile.Start(profile.CPUProfile, profile.ProfilePath(".")).Stop()
 	}
-	buyersPerThread = int(float64(numBuyers) / float64(numThreads))
-	sellersPerThread = int(float64(numSellers) / float64(numThreads))
-	tradesPerThread = int(float64(maxNumberOfTrades) / float64(numThreads))
+
+	buyersPerThread = numBuyers / numThreads
+	sellersPerThread = numSellers / numThreads
+	tradesPerThread = maxNumberOfTrades / numThreads
 
 	// seed RNG
 	rand.Seed(time.Now().UTC().UnixNano())
